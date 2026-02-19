@@ -10,7 +10,7 @@ from WonderPy.core.wwConstants import WWRobotConstants
 from WonderPy.components.wwMedia import WWMedia
 from WonderPy.core.wwRobot import WWRobot
 
-from .map import GameMap, WindowEvent, TurtlePose, TileType
+from .map import GameMap, WindowEvent, TurtlePose, TileType, TileState
 
 # TODO:
 # Auto reconnect to fix initial failed start
@@ -185,7 +185,6 @@ class RobotInterface:
         #robot.commands.body.do_forward(10, 3)
         robot.commands.RGB.stage_all(1,0,0)
         map = GameMap(num_map_tiles=MAP_SIZE_TILES,
-                      goal_tile=GOAL_TILE,
                       tile_size_pixels=TILE_SIZE_PIXELS)
         
         position_scale = TILE_SIZE_PIXELS / TILE_SIZE_CM
@@ -231,12 +230,18 @@ class RobotInterface:
                     # Can only handle one action at a time
                     break
 
+                # Set all tiles to be unobserved
+                for t in map.GetAllTiles():
+                    t.observed = False
+
+                map_x = int(map.turtle_pose.x / TILE_SIZE_PIXELS)
+                map_y = int(map.turtle_pose.y / TILE_SIZE_PIXELS)
+
+                map.tiles[map_x][map_y] = TileState(TileType.EMPTY, observed=True)
+
                 robot_idle = robot.sensors.pose.watermark_inferred == 255
                 if robot_idle:
-                    map_x = int(map.turtle_pose.x / TILE_SIZE_PIXELS)
-                    map_y = int(map.turtle_pose.y / TILE_SIZE_PIXELS)
 
-                    map.tiles[map_x][map_y] = TileType.EMPTY
                     if map.turtle_pose.theta < 45 or map.turtle_pose.theta > (360-45):
                         front_x = map_x + 1
                         front_y = map_y
@@ -252,19 +257,20 @@ class RobotInterface:
 
                     looking_off_map = front_x < 0 or front_x >= MAP_SIZE_TILES[0] or front_y < 0 or front_y >= MAP_SIZE_TILES[1]
                     
+
                     if not looking_off_map:
                         if robot.sensors.distance_front_left_facing.reflectance is not None \
                             and robot.sensors.distance_front_left_facing.reflectance > FRONT_DETECTION_THRESHOLD \
                             and robot.sensors.distance_front_right_facing.reflectance is not None \
                             and robot.sensors.distance_front_right_facing.reflectance > FRONT_DETECTION_THRESHOLD:
-                            map.tiles[front_x][front_y] = TileType.BLOCKED
+                            map.tiles[front_x][front_y] = TileState(TileType.BLOCKED, observed=True)
                         else:
-                            map.tiles[front_x][front_y] = TileType.EMPTY
+                            map.tiles[front_x][front_y] = TileState(TileType.EMPTY, observed=True)
 
                     if requested_move:
                         if looking_off_map:
                             print('Move off map')
-                        elif map.tiles[front_x][front_y] == TileType.BLOCKED:
+                        elif map.tiles[front_x][front_y].type == TileType.BLOCKED:
                             print('Move blocked')
                         else:
                             robot.commands.body.stage_pose(0, TILE_SIZE_CM, 0, TURN_TIME, mode=POSE_MODE)
