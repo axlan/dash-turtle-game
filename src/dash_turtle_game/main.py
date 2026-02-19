@@ -10,11 +10,19 @@ from WonderPy.core.wwConstants import WWRobotConstants
 from WonderPy.components.wwMedia import WWMedia
 from WonderPy.core.wwRobot import WWRobot
 
-from .map import GameMap, WindowEvent, TurtlePose
+from .map import GameMap, WindowEvent, TurtlePose, TileType
 
 # TODO:
 # Auto reconnect to fix initial failed start
-# Fix coordinates not lining up
+# Tune obstacle detection
+# Make sounds on refuse commands
+# Add goal animation
+# Add command queue with GUI HUD
+# Change commands to correct detected pose error
+# Integrate with toy controller
+# Integrate with RFID cards
+# Better fog of war (default all clear, show unknown as greyed)
+
 
 # Traceback (most recent call last):
 #   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/backends/bluezdbus/client.py", line 316, in connect
@@ -66,7 +74,6 @@ from .map import GameMap, WindowEvent, TurtlePose
 #     raise TimeoutError from exc_val
 # TimeoutError
 
-
 START_TILE = (2, 2)
 START_THETA = 90
 GOAL_TILE = (1, 3)
@@ -74,11 +81,57 @@ MAP_SIZE_TILES = (6,6)
 TILE_SIZE_CM = 30.48
 TILE_SIZE_PIXELS = 64
 
+# Rear:
+# 80cm -> 3
+# 70cm -> 3.25
+# 60cm -> 4
+# 50cm -> 4.75
+# 40cm -> 6
+# 30cm -> 9.5
+# 25cm -> 14
+# 20cm -> 19.5
+# 18cm -> 24
+# 16cm -> 30.5
+# 14cm -> 41
+# 12cm -> 55
+# 10cm -> 80
+# 8cm -> 130
+# 6cm -> 250
+# 5cm -> 255
+# left facing:
+# 80,0.5
+# 60,1.75
+# 40,4.5
+# 30,8.5
+# 25,13.75
+# 20,20.5
+# 18,27.5
+# 16,35
+# 14,44
+# 12,57
+# 10,83
+# 8,142
+# 6,234
+# 5,255
+# front:
+# 30,3,6
+# 25,5,9
+# 20,11,13
+# 18,14,16
+# 16,20,19
+# 14,25,23
+# 12,30,29
+# 10,48,46
+# 8,62,63
+# 6,104,98
+# 4,170,165
+# 3,255,255
+FRONT_DETECTION_THRESHOLD = 12
 TURN_TIME = 4
 
 POSE_MODE = WWRobotConstants.WWPoseMode.WW_POSE_MODE_RELATIVE_MEASURED
 
-
+TIME_BETWEEN_PRINT_SEC = 2.0
 
 def normalize_ang(angle: float) -> float:
     return angle % 360.0
@@ -104,12 +157,6 @@ def rotate_point(x, y, sigma_degrees):
     y_prime = x * math.sin(sigma_radians) + y * math.cos(sigma_radians)
     
     return x_prime, y_prime
-
-async def stop_loop():
-    loop = asyncio.get_event_loop()
-    tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
-    for task in tasks:
-        task.cancel()
 
 class RobotInterface:
 
@@ -163,26 +210,74 @@ class RobotInterface:
                 map.turtle_pose.x = (position_offset[0] + rot_x) * position_scale
                 map.turtle_pose.y = (position_offset[1] + rot_y) * position_scale
                 # +90 to Handle turtle bot facing in +y direction
-                map.turtle_pose.theta = START_THETA + bot_theta + 90
+                map.turtle_pose.theta = normalize_ang(START_THETA + bot_theta)
 
                 # print(f'map: {rot_x}, {rot_y}, {START_THETA + bot_theta}')
 
-                if time.time() - last_print > 2:
-                    print(robot.sensors.distance_rear)
-                    last_print = time.time()
-
-
+                requested_move = False
                 for event in map.GetWindowEvents():
                     if event == WindowEvent.QUIT:
                         if self.loop is not None:
-                            asyncio.run_coroutine_threadsafe(stop_loop(), self.loop)
+                            print('GUI Exited...')
+                            WonderPy.core.wwMain.stop()
                         break
                     elif event == WindowEvent.LEFT:
                         robot.commands.body.stage_pose(0, 0, 90, TURN_TIME, mode=POSE_MODE)
                     elif event == WindowEvent.RIGHT:
                         robot.commands.body.stage_pose(0, 0, -90, TURN_TIME, mode=POSE_MODE)
                     elif event == WindowEvent.UP:
-                        robot.commands.body.stage_pose(0, TILE_SIZE_CM, 0, TURN_TIME, mode=POSE_MODE)
+                        requested_move = True
+                    
+                    # Can only handle one action at a time
+                    break
+
+                robot_idle = robot.sensors.pose.watermark_inferred == 255
+                if robot_idle:
+                    map_x = int(map.turtle_pose.x / TILE_SIZE_PIXELS)
+                    map_y = int(map.turtle_pose.y / TILE_SIZE_PIXELS)
+
+                    map.tiles[map_x][map_y] = TileType.EMPTY
+                    if map.turtle_pose.theta < 45 or map.turtle_pose.theta > (360-45):
+                        front_x = map_x + 1
+                        front_y = map_y
+                    elif map.turtle_pose.theta < 135:
+                        front_x = map_x
+                        front_y = map_y + 1
+                    elif map.turtle_pose.theta < 225:
+                        front_x = map_x - 1
+                        front_y = map_y
+                    else:
+                        front_x = map_x
+                        front_y = map_y - 1
+
+                    looking_off_map = front_x < 0 or front_x >= MAP_SIZE_TILES[0] or front_y < 0 or front_y >= MAP_SIZE_TILES[1]
+                    
+                    if not looking_off_map:
+                        if robot.sensors.distance_front_left_facing.reflectance is not None \
+                            and robot.sensors.distance_front_left_facing.reflectance > FRONT_DETECTION_THRESHOLD \
+                            and robot.sensors.distance_front_right_facing.reflectance is not None \
+                            and robot.sensors.distance_front_right_facing.reflectance > FRONT_DETECTION_THRESHOLD:
+                            map.tiles[front_x][front_y] = TileType.BLOCKED
+                        else:
+                            map.tiles[front_x][front_y] = TileType.EMPTY
+
+                    if requested_move:
+                        if looking_off_map:
+                            print('Move off map')
+                        elif map.tiles[front_x][front_y] == TileType.BLOCKED:
+                            print('Move blocked')
+                        else:
+                            robot.commands.body.stage_pose(0, TILE_SIZE_CM, 0, TURN_TIME, mode=POSE_MODE)
+
+
+                if time.time() - last_print > TIME_BETWEEN_PRINT_SEC:
+                    # print(f'{int(robot.sensors.distance_rear.reflectance):3},{int(robot.sensors.distance_front_right_facing.reflectance):3},{int(robot.sensors.distance_front_left_facing.reflectance):3}')
+                    # print(f'{robot.sensors.distance_rear}')
+                    # if robot_idle:
+                    #     print(f'map: {map_x}, {map_y}, {map.turtle_pose.theta}')
+                    #     print(f'front: {front_x}, {front_y}')
+                    # print(robot.sensors.distance_front_left_facing.reflectance, robot.sensors.distance_front_right_facing.reflectance)
+                    last_print = time.time()
 
                 map.Draw()
 

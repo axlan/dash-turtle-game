@@ -1,11 +1,11 @@
 [project]
 name = "dash-turtle-game"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turtle bot game using a Dash robot"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "WonderPy@git+https://github.com/axlan/WonderPy",
+    "WonderPy @ git+https://github.com/axlan/WonderPy",
     "pytmx",
     "pygame",
     "paho-mqtt",

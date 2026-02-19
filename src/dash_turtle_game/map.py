@@ -100,7 +100,7 @@ class GameMap:
             for r, t in enumerate(col_tiles):
                 surf = self.tile_map[t]
                 x = self.tile_size * c
-                y = self.tile_size * r
+                y = self.height - self.tile_size * (r + 1)
                 self.screen.blit(surf, (x,y) , (0,0,self.tile_size,self.tile_size))
 
         rotated = pygame.transform.rotate(self.turtle_frame, self.turtle_pose.theta)
