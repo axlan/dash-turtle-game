@@ -124,8 +124,10 @@ class GameMap:
         rotated = pygame.transform.rotate(self.turtle_frame, self.turtle_pose.theta)
         rotated_rect = rotated.get_rect()
         # handle y starting at top and going down
-        y = self.height - self.turtle_pose.y
-        rotated_rect.center = (int(self.turtle_pose.x), int(y))
+        # Convert turtle position to pixels
+        y = int(self.height - self.turtle_pose.y * self.tile_size)
+        x = int(self.turtle_pose.x * self.tile_size)
+        rotated_rect.center = (x, y)
         self.screen.blit(rotated, rotated_rect)
 
         pygame.display.flip()
