@@ -15,7 +15,6 @@ TURTLE_IMAGE = ASSET_DIR / "images" / "turtle.png"
 
 DimType = tuple[int, int]
 
-
 class TileType(Enum):
     UNKNOWN = auto()
     EMPTY = auto()
@@ -34,6 +33,7 @@ class TurtlePose:
 class TileState:
     type: TileType
     observed: bool = False
+    text: str = ''
 
 
 TILE_SHEET_OFFSETS = {
@@ -52,10 +52,11 @@ class GameMap:
         self.tile_size = tile_size_pixels
         self.width = self.tile_size * num_map_tiles[0]
         self.height = self.tile_size * num_map_tiles[1]
+        self.font = pygame.font.SysFont(None, 36)
 
         self.tiles: list[list[TileState]] = []
         for _ in range(num_map_tiles[0]):
-            col = [TileState(TileType.EMPTY)] * num_map_tiles[1]
+            col = [TileState(TileType.EMPTY) for _ in range(num_map_tiles[1])]
             self.tiles.append(col)
 
         self.screen = pygame.display.set_mode((self.width, self.height))
@@ -109,6 +110,9 @@ class GameMap:
                 x = self.tile_size * c
                 y = self.height - self.tile_size * (r + 1)
                 self.screen.blit(surf, (x, y), (0, 0, self.tile_size, self.tile_size))
+                text_surface = self.font.render(t.text, True, (255, 255, 255))
+                rect = text_surface.get_rect(center=(x + self.tile_size/2.0, y+ self.tile_size/2.0))
+                self.screen.blit(text_surface, rect)
                 if not t.observed:
                     self.screen.blit(
                         self.fog_surface, (x, y), (0, 0, self.tile_size, self.tile_size)

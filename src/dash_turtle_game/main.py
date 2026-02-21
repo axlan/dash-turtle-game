@@ -14,9 +14,9 @@ from WonderPy.core.wwRobot import WWRobot
 from .map import GameMap, CmdEvent, TurtlePose, TileType, TileState
 from .mqtt_client import MQTTCommandClient
 
-START_TILE = (0, 0)
-START_THETA = 90
-GOAL_TILE = (0, 2)
+START_TILE = (0, 5)
+START_THETA = 270
+GOAL_TILE = (4, 1)
 MAP_SIZE_TILES = (6, 6)
 TILE_SIZE_CM = 30.48
 TILE_SIZE_PIXELS = 64
@@ -29,8 +29,10 @@ TIME_BETWEEN_PRINT_SEC = 2.0
 
 # TODO:
 # Tune obstacle detection
+# Add imminent collision avoidance
 # Add command queue with GUI HUD
 # Integrate with RFID cards
+# Handle disconnect gracefully
 
 
 # Coordinates notes:
@@ -43,57 +45,6 @@ TIME_BETWEEN_PRINT_SEC = 2.0
 #
 # The control uses unitless distance where each tile is 1x1
 #
-
-
-# Traceback (most recent call last):
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/backends/bluezdbus/client.py", line 316, in connect
-#     await self._get_services(
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/backends/bluezdbus/client.py", line 677, in _get_services
-#     self.services = await manager.get_services(
-#                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/backends/bluezdbus/manager.py", line 719, in get_services
-#     await self._wait_for_services_discovery(device_path)
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/backends/bluezdbus/manager.py", line 873, in _wait_for_services_discovery
-#     done, _ = await asyncio.wait(
-#               ^^^^^^^^^^^^^^^^^^^
-#   File "/usr/lib/python3.12/asyncio/tasks.py", line 464, in wait
-#     return await _wait(fs, timeout, return_when, loop)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/usr/lib/python3.12/asyncio/tasks.py", line 550, in _wait
-#     await waiter
-# asyncio.exceptions.CancelledError
-
-# The above exception was the direct cause of the following exception:
-
-# Traceback (most recent call last):
-#   File "<frozen runpy>", line 198, in _run_module_as_main
-#   File "<frozen runpy>", line 88, in _run_code
-#   File "/home/jdiamond/src/dash-turtle-game/src/dash_turtle_game/main.py", line 150, in <module>
-#     WonderPy.core.wwMain.start(robot)
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/WonderPy/core/wwMain.py", line 6, in start
-#     WonderPy.core.wwBTLEMgr.WWBTLEManager(delegate_instance, arguments).run()
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/WonderPy/core/wwBTLEMgr.py", line 323, in run
-#     asyncio.run(self.scan_and_connect())
-#   File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
-#     return runner.run(main)
-#            ^^^^^^^^^^^^^^^^
-#   File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
-#     return self._loop.run_until_complete(task)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
-#     return future.result()
-#            ^^^^^^^^^^^^^^^
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/WonderPy/core/wwBTLEMgr.py", line 122, in scan_and_connect
-#     async with BleakClient(scanned_device.address, timeout=30) as temp_client:
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/__init__.py", line 598, in __aenter__
-#     await self.connect()
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/__init__.py", line 620, in connect
-#     await self._backend.connect(self._pair_before_connect, **kwargs)
-#   File "/home/jdiamond/src/dash-turtle-game/.venv/lib/python3.12/site-packages/bleak/backends/bluezdbus/client.py", line 148, in connect
-#     async with async_timeout(timeout):
-#   File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
-#     raise TimeoutError from exc_val
-# TimeoutError
 
 
 def normalize_ang360(angle: float) -> float:
@@ -230,7 +181,7 @@ class RobotPoseMapper:
 
 def set_observed_tile(map: GameMap, x: int, y: int, tile: TileType):
     if map.tiles[x][y].type != TileType.GOAL:
-        map.tiles[x][y] = TileState(tile, observed=True)
+        map.tiles[x][y] = TileState(tile, observed=True, text=map.tiles[x][y].text)
     else:
         map.tiles[x][y].observed = True
 
@@ -334,15 +285,29 @@ class RobotInterface:
                     elif request_turn:
                         bot_mapper.turn(turn_clockwise)
 
-                    # Set all tiles to be unobserved
-                    for t in map.GetAllTiles():
+                    for i, t in enumerate(map.GetAllTiles()):
                         t.observed = False
+
+                    # Set all tiles to be unobserved and with their letter.
+                    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                    for c, col_tiles in enumerate(map.tiles):
+                        for r, t in enumerate(col_tiles):
+                            i = c + (MAP_SIZE_TILES[1] - r - 1) * MAP_SIZE_TILES[0]
+                            t.observed = False
+                            t.text = letters[i]
 
                     map_x = int(map.turtle_pose.x)
                     map_y = int(map.turtle_pose.y)
 
-                    if map_x < MAP_SIZE_TILES[0] and map_y < MAP_SIZE_TILES[1]:
-                        set_observed_tile(map, map_x, map_y, TileType.EMPTY)
+                    if map_x >= MAP_SIZE_TILES[0] and map_y >= MAP_SIZE_TILES[1]:
+                        print("Unexpected map position")
+                        print(
+                            f"robot pose: x:{robot.sensors.pose.x}, y:{robot.sensors.pose.y}, theta: {robot.sensors.pose.degrees}"
+                        )
+                        print(f"map pose: {map.turtle_pose}")
+                        continue
+
+                    set_observed_tile(map, map_x, map_y, TileType.EMPTY)
 
                     if robot_idle:
                         if (
