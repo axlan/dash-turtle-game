@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import random
 import time
 import math
 from threading import Thread
@@ -10,11 +11,12 @@ from WonderPy.core.wwConstants import WWRobotConstants
 from WonderPy.components.wwMedia import WWMedia
 from WonderPy.core.wwRobot import WWRobot
 
-from .map import GameMap, WindowEvent, TurtlePose, TileType, TileState
+from .map import GameMap, CmdEvent, TurtlePose, TileType, TileState
+from .mqtt_client import MQTTCommandClient
 
 START_TILE = (0, 0)
 START_THETA = 90
-GOAL_TILE = (1, 3)
+GOAL_TILE = (0, 2)
 MAP_SIZE_TILES = (6, 6)
 TILE_SIZE_CM = 30.48
 TILE_SIZE_PIXELS = 64
@@ -26,12 +28,8 @@ FORWARD_TIME = 4
 TIME_BETWEEN_PRINT_SEC = 2.0
 
 # TODO:
-# Auto reconnect to fix initial failed start
 # Tune obstacle detection
-# Make sounds on refuse commands
-# Add goal animation
 # Add command queue with GUI HUD
-# Integrate with toy controller
 # Integrate with RFID cards
 
 
@@ -129,6 +127,41 @@ def rotate_point(x, y, sigma_degrees):
     return x_prime, y_prime
 
 
+def set_bot_rgb(robot: WWRobot):
+    robot.commands.RGB.stage_ear_left(0, 1, 0)
+    robot.commands.RGB.stage_front(0, 0, 1)
+    robot.commands.RGB.stage_ear_right(1, 0, 0)
+
+
+def do_celebrate(robot: WWRobot):
+    def random_color():
+        return random.random(), random.random(), random.random()
+
+    robot.commands.media.stage_audio(WWMedia.WWSound.WWSoundDash.TRUMPET_01, 1.0)
+
+    robot.commands.body.stage_pose(
+        0,
+        0,
+        degrees=360,
+        time=4,
+        wrap_theta=False,
+        mode=WWRobotConstants.WWPoseMode.WW_POSE_MODE_RELATIVE_MEASURED,
+    )
+
+    start = time.time()
+    did_yipee = False
+    while time.time() - start < 6:
+        robot.commands.RGB.stage_ear_left(*random_color())
+        robot.commands.RGB.stage_ear_right(*random_color())
+        robot.commands.RGB.stage_front(*random_color())
+        time.sleep(0.2)
+        if time.time() - start > 3 and not did_yipee:
+            robot.commands.media.stage_audio(WWMedia.WWSound.WWSoundDash.YIPPEE_02, 1.0)
+            did_yipee = True
+
+    set_bot_rgb(robot)
+
+
 class RobotPoseMapper:
     def __init__(
         self, robot: WWRobot, start_pose_virtual: TurtlePose, pos_scale: float
@@ -195,6 +228,13 @@ class RobotPoseMapper:
         )
 
 
+def set_observed_tile(map: GameMap, x: int, y: int, tile: TileType):
+    if map.tiles[x][y].type != TileType.GOAL:
+        map.tiles[x][y] = TileState(tile, observed=True)
+    else:
+        map.tiles[x][y].observed = True
+
+
 class RobotInterface:
 
     def __init__(self) -> None:
@@ -221,7 +261,7 @@ class RobotInterface:
     # multithreaded.
     def robot_ctrl(self, robot: WWRobot):
         # robot.commands.body.do_forward(10, 3)
-        robot.commands.RGB.stage_all(1, 0, 0)
+        set_bot_rgb(robot)
         map = GameMap(num_map_tiles=MAP_SIZE_TILES, tile_size_pixels=TILE_SIZE_PIXELS)
         last_print = time.time()
 
@@ -236,106 +276,151 @@ class RobotInterface:
             pos_scale=1.0 / TILE_SIZE_CM,
         )
 
-        try:
-            while self.is_running:
+        map.tiles[GOAL_TILE[0]][GOAL_TILE[1]] = TileState(TileType.GOAL)
+        celebrated = False
 
-                bot_pose = bot_mapper.get_pose()
-                map.turtle_pose = bot_pose
+        last_idle = False
 
-                # print(f'map: {rot_x}, {rot_y}, {START_THETA + bot_theta}')
+        with MQTTCommandClient("192.168.1.110") as mqtt_client:
+            try:
+                while self.is_running:
+                    robot_idle = robot.sensors.pose.watermark_inferred == 255
 
-                requested_move = False
-                for event in map.GetWindowEvents():
-                    if event == WindowEvent.QUIT:
-                        if self.loop is not None:
-                            print("GUI Exited...")
-                            WonderPy.core.wwMain.stop()
-                        break
-                    elif event == WindowEvent.LEFT:
-                        bot_mapper.turn(turn_clockwise=False)
-                    elif event == WindowEvent.RIGHT:
-                        bot_mapper.turn(turn_clockwise=True)
-                    elif event == WindowEvent.UP:
-                        requested_move = True
+                    if last_idle and not robot_idle:
+                        robot.commands.monoLED.stage_button_main(0)
+                    elif not last_idle and robot_idle:
+                        robot.commands.monoLED.stage_button_main(1)
+                    last_idle = robot_idle
 
-                    # Can only handle one action at a time
-                    break
+                    bot_pose = bot_mapper.get_pose()
 
-                # Set all tiles to be unobserved
-                for t in map.GetAllTiles():
-                    t.observed = False
+                    map.turtle_pose = bot_pose
 
-                map_x = int(map.turtle_pose.x)
-                map_y = int(map.turtle_pose.y)
+                    def handle_events(events):
+                        requested_move = False
+                        request_turn = False
+                        turn_clockwise = False
+                        for event in events:
+                            if event == CmdEvent.QUIT:
+                                if self.loop is not None:
+                                    print("GUI Exited...")
+                                    WonderPy.core.wwMain.stop()
+                            elif event == CmdEvent.LEFT:
+                                request_turn = True
+                                turn_clockwise = False
+                            elif event == CmdEvent.RIGHT:
+                                request_turn = True
+                                turn_clockwise = True
+                            elif event == CmdEvent.UP:
+                                requested_move = True
 
-                if map_x < MAP_SIZE_TILES[0] and map_y < MAP_SIZE_TILES[1]:
-                    map.tiles[map_x][map_y] = TileState(TileType.EMPTY, observed=True)
+                            # Can only handle one action at a time
+                            break
+                        return request_turn, requested_move, turn_clockwise
 
-                robot_idle = robot.sensors.pose.watermark_inferred == 255
-                if robot_idle:
-
-                    if map.turtle_pose.theta < 45 or map.turtle_pose.theta > (360 - 45):
-                        front_x = map_x + 1
-                        front_y = map_y
-                    elif map.turtle_pose.theta < 135:
-                        front_x = map_x
-                        front_y = map_y + 1
-                    elif map.turtle_pose.theta < 225:
-                        front_x = map_x - 1
-                        front_y = map_y
-                    else:
-                        front_x = map_x
-                        front_y = map_y - 1
-
-                    looking_off_map = (
-                        front_x < 0
-                        or front_x >= MAP_SIZE_TILES[0]
-                        or front_y < 0
-                        or front_y >= MAP_SIZE_TILES[1]
+                    request_turn, requested_move, turn_clockwise = handle_events(
+                        map.GetWindowEvents()
                     )
 
-                    if not looking_off_map:
+                    if not requested_move and not request_turn:
+                        request_turn, requested_move, turn_clockwise = handle_events(
+                            mqtt_client.get_messages()
+                        )
+
+                    if not robot_idle and (request_turn or requested_move):
+                        robot.commands.media.stage_audio(
+                            WWMedia.WWSound.WWSoundDash.SIGH_DASH, 1.0
+                        )
+                    elif request_turn:
+                        bot_mapper.turn(turn_clockwise)
+
+                    # Set all tiles to be unobserved
+                    for t in map.GetAllTiles():
+                        t.observed = False
+
+                    map_x = int(map.turtle_pose.x)
+                    map_y = int(map.turtle_pose.y)
+
+                    if map_x < MAP_SIZE_TILES[0] and map_y < MAP_SIZE_TILES[1]:
+                        set_observed_tile(map, map_x, map_y, TileType.EMPTY)
+
+                    if robot_idle:
                         if (
-                            robot.sensors.distance_front_left_facing.reflectance
-                            is not None
-                            and robot.sensors.distance_front_left_facing.reflectance
-                            > FRONT_DETECTION_THRESHOLD
-                            and robot.sensors.distance_front_right_facing.reflectance
-                            is not None
-                            and robot.sensors.distance_front_right_facing.reflectance
-                            > FRONT_DETECTION_THRESHOLD
+                            not celebrated
+                            and map.tiles[map_x][map_y].type == TileType.GOAL
                         ):
-                            map.tiles[front_x][front_y] = TileState(
-                                TileType.BLOCKED, observed=True
-                            )
+                            # This blocks the GUI, should probably not, but not a huge issue.
+                            do_celebrate(robot)
+                            celebrated = True
+
+                        if map.turtle_pose.theta < 45 or map.turtle_pose.theta > (
+                            360 - 45
+                        ):
+                            front_x = map_x + 1
+                            front_y = map_y
+                        elif map.turtle_pose.theta < 135:
+                            front_x = map_x
+                            front_y = map_y + 1
+                        elif map.turtle_pose.theta < 225:
+                            front_x = map_x - 1
+                            front_y = map_y
                         else:
-                            map.tiles[front_x][front_y] = TileState(
-                                TileType.EMPTY, observed=True
-                            )
+                            front_x = map_x
+                            front_y = map_y - 1
 
-                    if requested_move:
-                        if looking_off_map:
-                            print("Move off map")
-                        elif map.tiles[front_x][front_y].type == TileType.BLOCKED:
-                            print("Move blocked")
-                        else:
-                            bot_mapper.forward()
+                        looking_off_map = (
+                            front_x < 0
+                            or front_x >= MAP_SIZE_TILES[0]
+                            or front_y < 0
+                            or front_y >= MAP_SIZE_TILES[1]
+                        )
 
-                if time.time() - last_print > TIME_BETWEEN_PRINT_SEC:
-                    # print(f'{int(robot.sensors.distance_rear.reflectance):3},{int(robot.sensors.distance_front_right_facing.reflectance):3},{int(robot.sensors.distance_front_left_facing.reflectance):3}')
-                    # print(f'{robot.sensors.distance_rear}')
-                    # if robot_idle:
-                    #     print(f'map: {map_x}, {map_y}, {map.turtle_pose.theta}')
-                    #     print(f'front: {front_x}, {front_y}')
-                    # print(robot.sensors.distance_front_left_facing.reflectance, robot.sensors.distance_front_right_facing.reflectance)
-                    print(bot_mapper.get_pose())
-                    last_print = time.time()
+                        if not looking_off_map:
+                            if (
+                                robot.sensors.distance_front_left_facing.reflectance
+                                is not None
+                                and robot.sensors.distance_front_left_facing.reflectance
+                                > FRONT_DETECTION_THRESHOLD
+                                and robot.sensors.distance_front_right_facing.reflectance
+                                is not None
+                                and robot.sensors.distance_front_right_facing.reflectance
+                                > FRONT_DETECTION_THRESHOLD
+                            ):
+                                set_observed_tile(
+                                    map, front_x, front_y, TileType.BLOCKED
+                                )
+                            else:
+                                set_observed_tile(map, front_x, front_y, TileType.EMPTY)
 
-                map.Draw()
+                        if requested_move:
+                            if looking_off_map:
+                                print("Move off map")
+                                robot.commands.media.stage_audio(
+                                    WWMedia.WWSound.WWSoundDash.NO_WAY, 1.0
+                                )
+                            elif map.tiles[front_x][front_y].type == TileType.BLOCKED:
+                                print("Move blocked")
+                                robot.commands.media.stage_audio(
+                                    WWMedia.WWSound.WWSoundDash.NO_WAY, 1.0
+                                )
+                            else:
+                                bot_mapper.forward()
 
-                self.queue.get()
-        except KeyboardInterrupt:
-            pass
+                    if time.time() - last_print > TIME_BETWEEN_PRINT_SEC:
+                        # print(f'{int(robot.sensors.distance_rear.reflectance):3},{int(robot.sensors.distance_front_right_facing.reflectance):3},{int(robot.sensors.distance_front_left_facing.reflectance):3}')
+                        # print(f'{robot.sensors.distance_rear}')
+                        # if robot_idle:
+                        #     print(f'map: {map_x}, {map_y}, {map.turtle_pose.theta}')
+                        #     print(f'front: {front_x}, {front_y}')
+                        # print(robot.sensors.distance_front_left_facing.reflectance, robot.sensors.distance_front_right_facing.reflectance)
+                        print(bot_mapper.get_pose())
+                        last_print = time.time()
+
+                    map.Draw()
+
+                    self.queue.get()
+            except KeyboardInterrupt:
+                pass
 
         map.Stop()
 

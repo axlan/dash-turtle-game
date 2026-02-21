@@ -1,11 +1,11 @@
 from enum import Enum, auto
-from typing import Iterable, Sequence
+from typing import Iterable
 from dataclasses import dataclass
 
 import pygame
 
 
-from .constants import ASSET_DIR
+from .constants import ASSET_DIR, CmdEvent
 
 BG_COLOR = pygame.Color("white")
 WINDOW_TITLE = "TurtleBot"
@@ -14,13 +14,6 @@ TILE_SHEET_CELL_SIZE = 32
 TURTLE_IMAGE = ASSET_DIR / "images" / "turtle.png"
 
 DimType = tuple[int, int]
-
-
-class WindowEvent(Enum):
-    QUIT = auto()
-    LEFT = auto()
-    RIGHT = auto()
-    UP = auto()
 
 
 class TileType(Enum):
@@ -93,19 +86,19 @@ class GameMap:
             for t in tiles: 
                 yield t
 
-    def GetWindowEvents(self) -> Iterable[WindowEvent]:
+    def GetWindowEvents(self) -> Iterable[CmdEvent]:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:  # X button or Alt+F4
-                yield WindowEvent.QUIT
+                yield CmdEvent.QUIT
             elif event.type == pygame.KEYUP:
                 if event.key == pygame.K_RIGHT:
-                    yield WindowEvent.RIGHT
+                    yield CmdEvent.RIGHT
                 elif event.key == pygame.K_LEFT:
-                    yield WindowEvent.LEFT
+                    yield CmdEvent.LEFT
                 elif event.key == pygame.K_UP:
-                    yield WindowEvent.UP
+                    yield CmdEvent.UP
                 elif event.key == pygame.K_ESCAPE:
-                    yield WindowEvent.QUIT
+                    yield CmdEvent.QUIT
 
     def Draw(self):
         self.screen.fill(BG_COLOR)
