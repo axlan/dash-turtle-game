@@ -14,14 +14,15 @@ from WonderPy.core.wwRobot import WWRobot
 from .map import GameMap, CmdEvent, TurtlePose, TileType, TileState
 from .mqtt_client import MQTTCommandClient
 
-START_TILE = (0, 5)
-START_THETA = 270
+START_TILE = (2, 2)
+START_THETA = 90
 GOAL_TILE = (4, 1)
 MAP_SIZE_TILES = (6, 6)
 TILE_SIZE_CM = 30.48
-TILE_SIZE_PIXELS = 64
+TILE_SIZE_PIXELS = 128
 
 FRONT_DETECTION_THRESHOLD = 12
+CRASH_DETECTION_THRESHOLD = 64
 TURN_TIME = 4
 FORWARD_TIME = 4
 
@@ -29,7 +30,7 @@ TIME_BETWEEN_PRINT_SEC = 2.0
 
 # TODO:
 # Tune obstacle detection
-# Add imminent collision avoidance
+# Decouple running GUI with robot sensor updates
 # Add command queue with GUI HUD
 # Integrate with RFID cards
 # Handle disconnect gracefully
@@ -130,7 +131,6 @@ class RobotPoseMapper:
         self.virtual_pos.theta = normalize_ang360(self.virtual_pos.theta)
         desired_degrees = self.virtual_pos.theta - self.theta_offset
         cur_pose = self.robot.sensors.pose
-        print(cur_pose.degrees, desired_degrees)
         self.robot.commands.body.stage_pose(
             cur_pose.x,
             cur_pose.y,
@@ -139,8 +139,8 @@ class RobotPoseMapper:
             mode=WWRobotConstants.WWPoseMode.WW_POSE_MODE_GLOBAL,
         )
 
-    def forward(self):
-        virtual_dist = 1.0
+    def forward(self, reverse=False):
+        virtual_dist = -1.0 if reverse else 1.0
         rad = math.radians(self.virtual_pos.theta)
         self.virtual_pos.x += math.cos(rad) * virtual_dist
         self.virtual_pos.y += math.sin(rad) * virtual_dist
@@ -193,10 +193,8 @@ class RobotInterface:
         self.ctrl_thread = None
         self.queue = Queue()
         self.ctrl_thread: Thread | None = None
-        self.loop: asyncio.AbstractEventLoop | None = None
 
     async def on_connect(self, robot: WWRobot):
-        self.loop = asyncio.get_event_loop()
         print("Starting a task for %s." % (robot.name))
         self.ctrl_thread = Thread(
             target=self.robot_ctrl, args=(robot,), name="robot_ctrl"
@@ -229,8 +227,11 @@ class RobotInterface:
 
         map.tiles[GOAL_TILE[0]][GOAL_TILE[1]] = TileState(TileType.GOAL)
         celebrated = False
-
         last_idle = False
+        moving_forward = False
+
+        queue_cmds = False
+        cmd_queue: list[CmdEvent] = []
 
         with MQTTCommandClient("192.168.1.110") as mqtt_client:
             try:
@@ -241,49 +242,64 @@ class RobotInterface:
                         robot.commands.monoLED.stage_button_main(0)
                     elif not last_idle and robot_idle:
                         robot.commands.monoLED.stage_button_main(1)
+                        moving_forward = False
                     last_idle = robot_idle
+
+                    if moving_forward:
+                        if (
+                            robot.sensors.distance_front_left_facing.reflectance
+                            is not None
+                            and robot.sensors.distance_front_right_facing.reflectance
+                            is not None
+                            and (
+                                robot.sensors.distance_front_left_facing.reflectance
+                                > CRASH_DETECTION_THRESHOLD
+                                or robot.sensors.distance_front_right_facing.reflectance
+                                > CRASH_DETECTION_THRESHOLD
+                            )
+                        ):
+                            moving_forward = False
+                            robot.commands.body.stage_stop()
+                            bot_mapper.forward(reverse=True)
 
                     bot_pose = bot_mapper.get_pose()
 
                     map.turtle_pose = bot_pose
 
-                    def handle_events(events):
-                        requested_move = False
-                        request_turn = False
-                        turn_clockwise = False
-                        for event in events:
-                            if event == CmdEvent.QUIT:
-                                if self.loop is not None:
-                                    print("GUI Exited...")
-                                    WonderPy.core.wwMain.stop()
-                            elif event == CmdEvent.LEFT:
-                                request_turn = True
-                                turn_clockwise = False
-                            elif event == CmdEvent.RIGHT:
-                                request_turn = True
-                                turn_clockwise = True
-                            elif event == CmdEvent.UP:
-                                requested_move = True
 
-                            # Can only handle one action at a time
-                            break
-                        return request_turn, requested_move, turn_clockwise
+                    new_cmds = list(map.GetWindowEvents())
+                    new_cmds += list(mqtt_client.get_messages())
 
-                    request_turn, requested_move, turn_clockwise = handle_events(
-                        map.GetWindowEvents()
-                    )
+                    if CmdEvent.QUIT in new_cmds:
+                        print("GUI Exited...")
+                        WonderPy.core.wwMain.stop()
+                        self.is_running = False
+                        continue
 
-                    if not requested_move and not request_turn:
-                        request_turn, requested_move, turn_clockwise = handle_events(
-                            mqtt_client.get_messages()
-                        )
+                    requested_move = False
+                    if queue_cmds:
+                        cmd_queue += new_cmds
+                    else:
+                        cur_cmd = CmdEvent.NONE
+                        if len(cmd_queue) > 0:
+                            if robot_idle:
+                                cur_cmd = cmd_queue.pop(0)
+                        elif len(new_cmds) > 0:
+                            if not robot_idle:
+                                print("Wait for previous command to complete.")
+                                robot.commands.media.stage_audio(
+                                    WWMedia.WWSound.WWSoundDash.SIGH_DASH, 1.0
+                                )
+                            else:
+                                # Only handle first event if multiple received in same update.
+                                cur_cmd = new_cmds[0]
+                    
+                        if cur_cmd in (CmdEvent.LEFT, CmdEvent.RIGHT):
+                            turn_clockwise = cur_cmd == CmdEvent.RIGHT
+                            bot_mapper.turn(turn_clockwise)
+                        elif cur_cmd == CmdEvent.UP:
+                            requested_move = True
 
-                    if not robot_idle and (request_turn or requested_move):
-                        robot.commands.media.stage_audio(
-                            WWMedia.WWSound.WWSoundDash.SIGH_DASH, 1.0
-                        )
-                    elif request_turn:
-                        bot_mapper.turn(turn_clockwise)
 
                     for i, t in enumerate(map.GetAllTiles()):
                         t.observed = False
@@ -300,6 +316,7 @@ class RobotInterface:
                     map_y = int(map.turtle_pose.y)
 
                     if map_x >= MAP_SIZE_TILES[0] and map_y >= MAP_SIZE_TILES[1]:
+                        # TODO: figure out what causes this. Sensor parsing error? Rollover?
                         print("Unexpected map position")
                         print(
                             f"robot pose: x:{robot.sensors.pose.x}, y:{robot.sensors.pose.y}, theta: {robot.sensors.pose.degrees}"
@@ -370,6 +387,7 @@ class RobotInterface:
                                 )
                             else:
                                 bot_mapper.forward()
+                                moving_forward = True
 
                     if time.time() - last_print > TIME_BETWEEN_PRINT_SEC:
                         # print(f'{int(robot.sensors.distance_rear.reflectance):3},{int(robot.sensors.distance_front_right_facing.reflectance):3},{int(robot.sensors.distance_front_left_facing.reflectance):3}')
@@ -379,6 +397,8 @@ class RobotInterface:
                         #     print(f'front: {front_x}, {front_y}')
                         # print(robot.sensors.distance_front_left_facing.reflectance, robot.sensors.distance_front_right_facing.reflectance)
                         print(bot_mapper.get_pose())
+                        if len(cmd_queue) > 0:
+                            print(cmd_queue)
                         last_print = time.time()
 
                     map.Draw()
