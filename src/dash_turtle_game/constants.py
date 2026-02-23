@@ -1,11 +1,59 @@
 from enum import Enum, auto
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 ASSET_DIR = Path(__file__).parents[2].resolve() / 'assets'
 
+DimType = tuple[int, int]
+
 class CmdEvent(Enum):
     NONE = auto()
-    QUIT = auto()
     LEFT = auto()
     RIGHT = auto()
     UP = auto()
+    QUIT = auto()
+    RUN_QUEUED = auto()
+    STOP = auto()
+
+class TileType(Enum):
+    UNKNOWN = auto()
+    EMPTY = auto()
+    BLOCKED = auto()
+    GOAL = auto()
+
+
+@dataclass(frozen=False)
+class TurtlePose:
+    x: float = 0
+    y: float = 0
+    theta: float = 0
+
+
+@dataclass(frozen=False)
+class TileState:
+    type: TileType
+    observed: bool = False
+    text: str = ''
+
+@dataclass
+class Settings:
+    START_TILE: DimType
+    START_THETA: float
+    GOAL_TILE: DimType
+    MAP_SIZE_TILES: DimType
+    TILE_SIZE_CM: float
+    TILE_SIZE_PIXELS: int
+
+    FRONT_DETECTION_THRESHOLD: int
+    CRASH_DETECTION_THRESHOLD: int
+    TURN_TIME: float
+    FORWARD_TIME: float
+
+    TIME_BETWEEN_PRINT_SEC: float
+
+    MQTT_BROKER_ADDR: Optional[str]
+
+def normalize_ang360(angle: float) -> float:
+    return angle % 360.0
+

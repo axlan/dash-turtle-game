@@ -1,39 +1,14 @@
-from enum import Enum, auto
 from typing import Iterable
-from dataclasses import dataclass
 
 import pygame
 
-
-from .constants import ASSET_DIR, CmdEvent
+from .constants import ASSET_DIR, CmdEvent, TileState, TileType, TurtlePose, DimType
 
 BG_COLOR = pygame.Color("white")
 WINDOW_TITLE = "TurtleBot"
 TILE_SHEET = ASSET_DIR / "images" / "CC_Tileset.webp"
 TILE_SHEET_CELL_SIZE = 32
 TURTLE_IMAGE = ASSET_DIR / "images" / "turtle.png"
-
-DimType = tuple[int, int]
-
-class TileType(Enum):
-    UNKNOWN = auto()
-    EMPTY = auto()
-    BLOCKED = auto()
-    GOAL = auto()
-
-
-@dataclass(frozen=False)
-class TurtlePose:
-    x: float = 0
-    y: float = 0
-    theta: float = 0
-
-
-@dataclass(frozen=False)
-class TileState:
-    type: TileType
-    observed: bool = False
-    text: str = ''
 
 
 TILE_SHEET_OFFSETS = {
