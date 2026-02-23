@@ -85,12 +85,7 @@ class MQTTCommandClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def connect(self, timeout: float = 10.0) -> None:
-        """Connect to the broker and block until the connection is established.
-
-        Raises ``ConnectionError`` if the broker rejects the connection or if
-        the timeout expires before a response is received.
-        """
+    def connect(self) -> None:
         self._client.connect_async(self._host, self._port)
         self._client.loop_start()
 
