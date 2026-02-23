@@ -1,7 +1,7 @@
 import time
 from threading import Thread
 
-from .map import GameMap
+from .map import GameManager
 from .constants import CmdEvent, TileType, TileState, Settings
 from .mqtt_client import MQTTCommandClient
 from .bot_interface import RobotInterface, BotSounds
@@ -41,18 +41,11 @@ SETTINGS = Settings(
 #
 
 
-def set_observed_tile(map: GameMap, x: int, y: int, tile: TileType):
-    if map.tiles[x][y].type != TileType.GOAL:
-        map.tiles[x][y] = TileState(tile, observed=True, text=map.tiles[x][y].text)
-    else:
-        map.tiles[x][y].observed = True
-
-
 # Can write this as either asyncio, or Thread. With asyncio, I can be sure
 # that the context won't switch while using a piece of data, but I can't
 # call the blocking WWRobot functions. To keep things simple, I'll keep it
 # multithreaded.
-def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None):
+def robot_ctrl(bot_inter: RobotInterface, game_gui: GameManager, mqtt_client: MQTTCommandClient | None):
 
     sensors = bot_inter.sensor_queue.get()
     if sensors is None or bot_inter.robot_ctrl is None:
@@ -63,13 +56,8 @@ def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None)
 
     # robot.commands.body.do_forward(10, 3)
     robot_ctrl.set_bot_rgb()
-    map = GameMap(
-        num_map_tiles=SETTINGS.MAP_SIZE_TILES,
-        tile_size_pixels=SETTINGS.TILE_SIZE_PIXELS,
-    )
     last_print = time.time()
 
-    map.tiles[SETTINGS.GOAL_TILE[0]][SETTINGS.GOAL_TILE[1]] = TileState(TileType.GOAL)
     celebrated = False
     last_idle = False
     moving_forward = False
@@ -103,9 +91,16 @@ def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None)
                     robot_ctrl.stop()
                     robot_ctrl.forward(reverse=True)
 
-            map.turtle_pose = robot_ctrl.get_pose()
+            map_pose = robot_ctrl.get_pose()
+            map_x = int(map_pose.x)
+            map_y = int(map_pose.y)
 
-            new_cmds = list(map.GetWindowEvents())
+            with game_gui.get_map() as locked_map:
+                locked_map.set_all_tiles_unobserved()
+                locked_map.turtle_pose = map_pose
+                locked_map.set_observed_tile(map_x, map_y, TileType.EMPTY)
+                new_cmds = list(locked_map.GetWindowEvents())
+
             if mqtt_client is not None:
                 new_cmds += list(mqtt_client.get_messages())
 
@@ -136,24 +131,6 @@ def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None)
                 elif cur_cmd == CmdEvent.UP:
                     requested_move = True
 
-            for i, t in enumerate(map.GetAllTiles()):
-                t.observed = False
-
-            # Set all tiles to be unobserved and with their letter.
-            letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-            for c, col_tiles in enumerate(map.tiles):
-                for r, t in enumerate(col_tiles):
-                    i = (
-                        c
-                        + (SETTINGS.MAP_SIZE_TILES[1] - r - 1)
-                        * SETTINGS.MAP_SIZE_TILES[0]
-                    )
-                    t.observed = False
-                    t.text = letters[i]
-
-            map_x = int(map.turtle_pose.x)
-            map_y = int(map.turtle_pose.y)
-
             if (map_x >= SETTINGS.MAP_SIZE_TILES[0]
                 or map_y >= SETTINGS.MAP_SIZE_TILES[1]
                 or map_x < 0
@@ -162,25 +139,23 @@ def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None)
                 # TODO: figure out what causes this. Sensor parsing error? Rollover?
                 print("Unexpected map position")
                 print(sensors)
-                print(map.turtle_pose)
+                print(map_pose)
                 exit(1)
                 continue
 
-            set_observed_tile(map, map_x, map_y, TileType.EMPTY)
-
             if sensors.is_idle:
-                if not celebrated and map.tiles[map_x][map_y].type == TileType.GOAL:
+                if not celebrated and game_gui.get_tile(map_x, map_y).type == TileType.GOAL:
                     # This blocks the GUI, should probably not, but not a huge issue.
                     robot_ctrl.do_celebrate()
                     celebrated = True
 
-                if map.turtle_pose.theta < 45 or map.turtle_pose.theta > (360 - 45):
+                if map_pose.theta < 45 or map_pose.theta > (360 - 45):
                     front_x = map_x + 1
                     front_y = map_y
-                elif map.turtle_pose.theta < 135:
+                elif map_pose.theta < 135:
                     front_x = map_x
                     front_y = map_y + 1
-                elif map.turtle_pose.theta < 225:
+                elif map_pose.theta < 225:
                     front_x = map_x - 1
                     front_y = map_y
                 else:
@@ -195,21 +170,22 @@ def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None)
                 )
 
                 if not looking_off_map:
-                    if (
-                        sensors.distance_front_left_facing
-                        > SETTINGS.FRONT_DETECTION_THRESHOLD
-                        and sensors.distance_front_right_facing
-                        > SETTINGS.FRONT_DETECTION_THRESHOLD
-                    ):
-                        set_observed_tile(map, front_x, front_y, TileType.BLOCKED)
-                    else:
-                        set_observed_tile(map, front_x, front_y, TileType.EMPTY)
+                    with game_gui.get_map() as locked_map:
+                        if (
+                            sensors.distance_front_left_facing
+                            > SETTINGS.FRONT_DETECTION_THRESHOLD
+                            and sensors.distance_front_right_facing
+                            > SETTINGS.FRONT_DETECTION_THRESHOLD
+                        ):
+                            locked_map.set_observed_tile(front_x, front_y, TileType.BLOCKED)
+                        else:
+                            locked_map.set_observed_tile(front_x, front_y, TileType.EMPTY)
 
                 if requested_move:
                     if looking_off_map:
                         print("Move off map")
                         robot_ctrl.play_sound(BotSounds.NO_WAY)
-                    elif map.tiles[front_x][front_y].type == TileType.BLOCKED:
+                    elif game_gui.get_tile(front_x, front_y).type == TileType.BLOCKED:
                         print("Move blocked")
                         robot_ctrl.play_sound(BotSounds.NO_WAY)
                     else:
@@ -220,20 +196,17 @@ def robot_ctrl(bot_inter: RobotInterface, mqtt_client: MQTTCommandClient | None)
                 # print(f'{int(robot.sensors.distance_rear):3},{int(robot.sensors.distance_front_right_facing):3},{int(robot.sensors.distance_front_left_facing):3}')
                 # print(f'{robot.sensors.distance_rear}')
                 # if sensors.is_idle:
-                #     print(f'map: {map_x}, {map_y}, {map.turtle_pose.theta}')
+                #     print(f'map: {map_x}, {map_y}, {map_pose.theta}')
                 #     print(f'front: {front_x}, {front_y}')
                 # print(robot.sensors.distance_front_left_facing, robot.sensors.distance_front_right_facing)
                 print(sensors)
-                print(map.turtle_pose)
+                print(map_pose)
                 if len(cmd_queue) > 0:
                     print(cmd_queue)
                 last_print = time.time()
 
-            map.Draw()
     except KeyboardInterrupt:
         pass
-
-    map.Stop()
 
 
 def main():
@@ -241,8 +214,11 @@ def main():
     if SETTINGS.MQTT_BROKER_ADDR:
         mqtt_client = MQTTCommandClient(SETTINGS.MQTT_BROKER_ADDR)
         mqtt_client.connect()
+
+    game_gui = GameManager(SETTINGS)
+
     bot_intr = RobotInterface(SETTINGS)
-    ctrl_thread = Thread(target=robot_ctrl, args=(bot_intr, mqtt_client))
+    ctrl_thread = Thread(target=robot_ctrl, args=(bot_intr, game_gui, mqtt_client))
     ctrl_thread.start()
 
     bot_intr.run()
@@ -250,6 +226,7 @@ def main():
     ctrl_thread.join()
     if mqtt_client is not None:
         mqtt_client.disconnect()
+    game_gui.stop()
 
 
 if __name__ == "__main__":

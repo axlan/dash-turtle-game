@@ -23,14 +23,14 @@ class TileType(Enum):
     GOAL = auto()
 
 
-@dataclass(frozen=False)
+@dataclass
 class TurtlePose:
-    x: float = 0
-    y: float = 0
-    theta: float = 0
+    x: float
+    y: float
+    theta: float
 
 
-@dataclass(frozen=False)
+@dataclass
 class TileState:
     type: TileType
     observed: bool = False

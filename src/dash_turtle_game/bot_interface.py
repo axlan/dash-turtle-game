@@ -1,10 +1,9 @@
-import copy
 from enum import StrEnum
 import random
 import time
 import math
 from queue import Queue
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import WonderPy.core.wwMain
 from WonderPy.core.wwConstants import WWRobotConstants
@@ -80,14 +79,14 @@ class RobotControl:
         )
         self.theta_offset = self.start_pose_virtual.theta - self.start_pose_robot.theta
         self.pos_scale = 1.0 / conf.TILE_SIZE_CM
-        self.virtual_pos = copy.copy(self.start_pose_virtual)
+        self.virtual_pos = self.start_pose_virtual
 
     def update_sensors(self, sensors: SensorData):
         self.sensors = sensors
 
     def turn(self, turn_clockwise: bool):
-        self.virtual_pos.theta += -90.0 if turn_clockwise else 90.0
-        self.virtual_pos.theta = normalize_ang360(self.virtual_pos.theta)
+        new_theta = normalize_ang360(self.virtual_pos.theta + (-90.0 if turn_clockwise else 90.0))
+        self.virtual_pos = replace(self.virtual_pos, theta = new_theta)
         desired_degrees = self.virtual_pos.theta - self.theta_offset
         self.robot.commands.body.stage_pose(
             self.sensors.x,
@@ -100,15 +99,16 @@ class RobotControl:
     def forward(self, reverse=False):
         virtual_dist = -1.0 if reverse else 1.0
         rad = math.radians(self.virtual_pos.theta)
-        self.virtual_pos.x += math.cos(rad) * virtual_dist
-        self.virtual_pos.y += math.sin(rad) * virtual_dist
+        new_x = self.virtual_pos.x + math.cos(rad) * virtual_dist
+        new_y = self.virtual_pos.y + math.sin(rad) * virtual_dist
+        self.virtual_pos = replace(self.virtual_pos, x=new_x, y=new_y)
 
         # Transform from virtual coordinates to robot coordinates
         # 1. Remove virtual start offset and convert to cm
         # 2. Rotate to the robots sensor orientation
         # 3. Add back the robots start position offset
-        desired_x = (self.virtual_pos.x - self.start_pose_virtual.x) / self.pos_scale
-        desired_y = (self.virtual_pos.y - self.start_pose_virtual.y) / self.pos_scale
+        desired_x = (new_x - self.start_pose_virtual.x) / self.pos_scale
+        desired_y = (new_y - self.start_pose_virtual.y) / self.pos_scale
         desired_x, desired_y = rotate_point(
             desired_x, desired_y, 90 - self.theta_offset
         )
