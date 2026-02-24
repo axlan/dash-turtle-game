@@ -1,7 +1,7 @@
 import time
 from threading import Thread
 
-from .map import GameManager
+from .map import ConnectionState, GameManager
 from .constants import CmdEvent, TileType, TileState, Settings
 from .mqtt_client import MQTTCommandClient
 from .bot_interface import RobotInterface, BotSounds
@@ -19,11 +19,11 @@ SETTINGS = Settings(
     FORWARD_TIME=4.0,
     TIME_BETWEEN_PRINT_SEC=2.0,
     MQTT_BROKER_ADDR="192.168.1.110",
+    BOT_CONNECT_TIMEOUT_SEC=10.0,
 )
 
 # TODO:
 # Tune obstacle detection
-# Decouple running GUI with robot sensor updates
 # Add command queue with GUI HUD
 # Integrate with RFID cards
 # Handle disconnect gracefully
@@ -45,12 +45,37 @@ SETTINGS = Settings(
 # that the context won't switch while using a piece of data, but I can't
 # call the blocking WWRobot functions. To keep things simple, I'll keep it
 # multithreaded.
-def robot_ctrl(bot_inter: RobotInterface, game_gui: GameManager, mqtt_client: MQTTCommandClient | None):
+def robot_ctrl(sys_ctrl: 'SystemControl'):
+    assert sys_ctrl.bot_intr is not None
 
-    sensors = bot_inter.sensor_queue.get()
+    bot_inter = sys_ctrl.bot_intr
+    game_gui = sys_ctrl.game_gui
+    mqtt_client = sys_ctrl.mqtt_client
+
+    start_time = time.time()
+    sensors = None
+    
+    while True:
+        try:
+            sensors = bot_inter.sensor_queue.get(timeout=0.1)
+            break
+        except:
+            if time.time() - start_time > SETTINGS.BOT_CONNECT_TIMEOUT_SEC:
+                break
+        events = list(game_gui.get_window_events())
+        if CmdEvent.QUIT in events:
+            sys_ctrl.stop()
+            return
+        elif CmdEvent.TOGGLE_CONNECT in events:
+            bot_inter.stop()
+            return
+
     if sensors is None or bot_inter.robot_ctrl is None:
         print("Robot interface terminated")
         return
+    
+    with game_gui.get_map() as locked_map:
+        locked_map.connected_state = ConnectionState.CONNECTED
 
     robot_ctrl = bot_inter.robot_ctrl
 
@@ -67,7 +92,12 @@ def robot_ctrl(bot_inter: RobotInterface, game_gui: GameManager, mqtt_client: MQ
 
     try:
         while True:
-            sensors = bot_inter.sensor_queue.get()
+            try:
+                sensors = bot_inter.sensor_queue.get(timeout=1)
+            except:
+                bot_inter.stop()
+                return
+
             if sensors is None:
                 print("Robot interface terminated")
                 return
@@ -99,13 +129,15 @@ def robot_ctrl(bot_inter: RobotInterface, game_gui: GameManager, mqtt_client: MQ
                 locked_map.set_all_tiles_unobserved()
                 locked_map.turtle_pose = map_pose
                 locked_map.set_observed_tile(map_x, map_y, TileType.EMPTY)
-                new_cmds = list(locked_map.GetWindowEvents())
-
+            
+            new_cmds = list(game_gui.get_window_events())
             if mqtt_client is not None:
                 new_cmds += list(mqtt_client.get_messages())
 
             if CmdEvent.QUIT in new_cmds:
-                print("GUI Exited...")
+                sys_ctrl.stop()
+                return
+            elif CmdEvent.TOGGLE_CONNECT in new_cmds:
                 bot_inter.stop()
                 return
 
@@ -209,25 +241,55 @@ def robot_ctrl(bot_inter: RobotInterface, game_gui: GameManager, mqtt_client: MQ
         pass
 
 
-def main():
-    mqtt_client = None
-    if SETTINGS.MQTT_BROKER_ADDR:
-        mqtt_client = MQTTCommandClient(SETTINGS.MQTT_BROKER_ADDR)
-        mqtt_client.connect()
+class SystemControl:
+    def __init__(self) -> None:
+        self.mqtt_client = None
+        if SETTINGS.MQTT_BROKER_ADDR:
+            mqtt_client = MQTTCommandClient(SETTINGS.MQTT_BROKER_ADDR)
+            mqtt_client.connect()
 
-    game_gui = GameManager(SETTINGS)
+        self.game_gui = GameManager(SETTINGS)
+        self.running = True
+        self.bot_intr: RobotInterface | None = None
 
-    bot_intr = RobotInterface(SETTINGS)
-    ctrl_thread = Thread(target=robot_ctrl, args=(bot_intr, game_gui, mqtt_client))
-    ctrl_thread.start()
+    def main(self):
+        is_connecting = False
+        while self.running:
+            try:
+                while not is_connecting:
+                    for event in self.game_gui.get_window_events():
+                        if event == CmdEvent.TOGGLE_CONNECT:
+                            with self.game_gui.get_map() as locked_map:
+                                locked_map.connected_state = ConnectionState.CONNECTING
+                            is_connecting = True
+                        elif event == CmdEvent.QUIT:
+                            raise KeyboardInterrupt()
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                self.stop()
+                return
 
-    bot_intr.run()
+            self.bot_intr = RobotInterface(SETTINGS)
+            ctrl_thread = Thread(target=robot_ctrl, args=(self,))
+            ctrl_thread.start()
 
-    ctrl_thread.join()
-    if mqtt_client is not None:
-        mqtt_client.disconnect()
-    game_gui.stop()
+            # This blocks until the connection to the bot is ended.
+            self.bot_intr.run()
+            self.bot_intr = None
 
+            ctrl_thread.join()
+            with self.game_gui.get_map() as locked_map:
+                locked_map.connected_state = ConnectionState.IDLE
+            is_connecting = False
+
+    def stop(self):
+        self.running = False
+        if self.bot_intr is not None:
+            self.bot_intr.stop()
+            self.bot_intr = None
+        if self.mqtt_client is not None:
+            self.mqtt_client.disconnect()
+        self.game_gui.stop()
 
 if __name__ == "__main__":
-    main()
+    SystemControl().main()

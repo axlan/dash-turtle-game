@@ -15,6 +15,8 @@ class CmdEvent(Enum):
     QUIT = auto()
     RUN_QUEUED = auto()
     STOP = auto()
+    TOGGLE_QUEUING = auto()
+    TOGGLE_CONNECT = auto()
 
 class TileType(Enum):
     UNKNOWN = auto()
@@ -53,6 +55,8 @@ class Settings:
     TIME_BETWEEN_PRINT_SEC: float
 
     MQTT_BROKER_ADDR: Optional[str]
+
+    BOT_CONNECT_TIMEOUT_SEC: float
 
 def normalize_ang360(angle: float) -> float:
     return angle % 360.0
