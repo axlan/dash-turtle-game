@@ -281,6 +281,7 @@ class SystemControl:
             ctrl_thread.join()
             with self.game_gui.get_map() as locked_map:
                 locked_map.connected_state = ConnectionState.IDLE
+                locked_map.center_turtle()
             is_connecting = False
 
     def stop(self):

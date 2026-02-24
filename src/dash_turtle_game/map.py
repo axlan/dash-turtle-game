@@ -248,6 +248,14 @@ class GameMap:
                        START_THETA=self.turtle_pose.theta,
                        GOAL_TILE=self._get_goal_tile())
 
+    def center_turtle(self):
+        # Snap to nearest tile center
+        x = round(self.turtle_pose.x - 0.5) + 0.5
+        y = round(self.turtle_pose.y - 0.5) + 0.5
+        # Round theta to nearest 90 degrees
+        theta = round(self.turtle_pose.theta / 90) * 90
+        self.turtle_pose = replace(self.turtle_pose, x=x, y=y, theta=theta % 360)
+
     def Draw(self):
         for event in self._get_window_events():
             self.event_queue.put_nowait(event)
