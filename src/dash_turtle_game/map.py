@@ -9,7 +9,7 @@ import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
 
-from .constants import ASSET_DIR, CmdEvent, TileState, TileType, TurtlePose, Settings
+from .constants import ASSET_DIR, CmdEvent, TileState, TileType, TurtlePose, Settings, DimType
 
 BG_COLOR = pygame.Color("white")
 WINDOW_TITLE = "TurtleBot"
@@ -71,6 +71,9 @@ class GameManager:
     def get_tile(self, x, y) -> TileState:
         return self._map.tiles[x][y]
 
+    def get_updated_settings(self):
+        return self._map.get_updated_settings()
+
     def stop(self):
         # DON"T CALL STOP WHILE HOLDING MAP
         self._running = False
@@ -85,6 +88,7 @@ class GameMap:
 
         self.event_queue: Queue[CmdEvent] = Queue()
 
+        self.conf = conf
         num_map_tiles=conf.MAP_SIZE_TILES
         tile_size_pixels=conf.TILE_SIZE_PIXELS
 
@@ -212,14 +216,18 @@ class GameMap:
         rotated_rect.center = (x, y)
         return rotated_rect
 
-    def _get_goal_rect(self) -> pygame.Rect:
+    def _get_goal_tile(self) -> DimType:
         for x, col_tiles in enumerate(self.tiles):
             for y, t in enumerate(col_tiles):
                 if t.type == TileType.GOAL:
-                    goal_x = self.tile_size * x + self.tile_size // 2
-                    goal_y = self.map_height - self.tile_size * (y + 1) + self.tile_size // 2
-                    return pygame.Rect(goal_x - self.tile_size // 2, goal_y - self.tile_size // 2, self.tile_size, self.tile_size)
-        return pygame.Rect(0, 0, 0, 0)
+                    return x, y
+        raise RuntimeError('No Goal Tile Set')
+
+    def _get_goal_rect(self) -> pygame.Rect:
+        x, y = self._get_goal_tile()
+        goal_x = self.tile_size * x + self.tile_size // 2
+        goal_y = self.map_height - self.tile_size * (y + 1) + self.tile_size // 2
+        return pygame.Rect(goal_x - self.tile_size // 2, goal_y - self.tile_size // 2, self.tile_size, self.tile_size)
 
     def _get_tile_from_pos(self, pos: tuple) -> tuple:
         x = pos[0] // self.tile_size
@@ -233,6 +241,12 @@ class GameMap:
 
     def set_connection_state(self, new_state: ConnectionState):
         self.connected_state = new_state
+
+    def get_updated_settings(self) -> Settings:
+        return replace(self.conf,
+                       START_TILE=(int(self.turtle_pose.x), int(self.turtle_pose.y)),
+                       START_THETA=self.turtle_pose.theta,
+                       GOAL_TILE=self._get_goal_tile())
 
     def Draw(self):
         for event in self._get_window_events():

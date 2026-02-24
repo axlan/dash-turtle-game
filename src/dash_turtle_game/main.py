@@ -2,7 +2,7 @@ import time
 from threading import Thread
 
 from .map import ConnectionState, GameManager
-from .constants import CmdEvent, TileType, TileState, Settings
+from .constants import CmdEvent, TileType, Settings
 from .mqtt_client import MQTTCommandClient
 from .bot_interface import RobotInterface, BotSounds
 
@@ -269,7 +269,8 @@ class SystemControl:
                 self.stop()
                 return
 
-            self.bot_intr = RobotInterface(SETTINGS)
+            # Get start and goal from map.
+            self.bot_intr = RobotInterface(self.game_gui.get_updated_settings())
             ctrl_thread = Thread(target=robot_ctrl, args=(self,))
             ctrl_thread.start()
 

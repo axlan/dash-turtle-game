@@ -519,7 +519,7 @@ wheels = [
 [[package]]
 name = "wonderpy"
 version = "0.3.0"
-source = { git = "https://github.com/axlan/WonderPy#baa5b3c84ed1463b2580bdf760b5de3d75f8e220" }
+source = { git = "https://github.com/axlan/WonderPy#271241f3f352cf323330540112fee2b27a39ccc6" }
 dependencies = [
     { name = "bleak" },
     { name = "mock" },
