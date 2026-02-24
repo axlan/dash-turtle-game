@@ -10,6 +10,7 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
 
 from .constants import ASSET_DIR, CmdEvent, TileState, TileType, TurtlePose, Settings, DimType
+from .card_gui import CardQueueWidget
 
 BG_COLOR = pygame.Color("white")
 WINDOW_TITLE = "TurtleBot"
@@ -20,6 +21,8 @@ BUTTON_COLOR = pygame.Color("gray")
 BUTTON_BORDER_COLOR = pygame.Color("white")
 TEXT_COLOR = pygame.Color("white")
 FOG_COLOR = pygame.Color(0, 0, 0, 100)
+BOTTOM_BAR_HEIGHT = 128
+
 
 
 TILE_SHEET_OFFSETS = {
@@ -102,8 +105,8 @@ class GameMap:
             col = [TileState(TileType.EMPTY) for _ in range(num_map_tiles[1])]
             self.tiles.append(col)
 
-        # Extra tile is for buttons
-        self.screen = pygame.display.set_mode((self.map_width, self.map_height + tile_size_pixels))
+        # Extra height is for buttons
+        self.screen = pygame.display.set_mode((self.map_width, self.map_height + BOTTOM_BAR_HEIGHT))
 
         self.turtle_pose = TurtlePose(
             conf.START_TILE[0] + 0.5,
@@ -114,6 +117,8 @@ class GameMap:
         self.turtle_frame = pygame.transform.scale(
             self.turtle_frame, (self.tile_size, self.tile_size)
         )
+
+        # Load and create arrow surfaces
 
         sheet = pygame.image.load(TILE_SHEET).convert_alpha()
         self.tile_map: dict[TileType, pygame.Surface] = {}
@@ -131,10 +136,10 @@ class GameMap:
         self.fog_surface.fill(FOG_COLOR)
 
         # Button setup
-        self.button_rect = pygame.Rect(10, self.map_height + 10, 120, self.tile_size - 20)
+        self.button_rect = pygame.Rect(10, self.map_height + 10, 120, BOTTOM_BAR_HEIGHT - 20)
         self.connected_state = ConnectionState.IDLE
         self.frame_count = 0
-        
+
         # Drag and drop state
         self.dragging = None  # None, 'turtle', or 'goal'
         self.drag_offset = (0, 0)
@@ -151,6 +156,8 @@ class GameMap:
                     * conf.MAP_SIZE_TILES[0]
                 )
                 self.tiles[x][y] = replace(t, text=letters[i])
+
+        self.card_widget = CardQueueWidget(170, self.map_height, self.map_width - 170, BOTTOM_BAR_HEIGHT)
 
 
     def set_all_tiles_unobserved(self):
@@ -207,6 +214,8 @@ class GameMap:
                     yield CmdEvent.UP
                 elif event.key == pygame.K_ESCAPE:
                     yield CmdEvent.QUIT
+                elif event.key == pygame.K_BACKSPACE:
+                    yield CmdEvent.DELETE_LAST_QUEUED
 
     def _get_turtle_rect(self) -> pygame.Rect:
         rotated = pygame.transform.rotate(self.turtle_frame, self.turtle_pose.theta)
@@ -303,6 +312,8 @@ class GameMap:
         
         text_rect.center = self.button_rect.center
         self.screen.blit(button_text, text_rect)
+
+        self.card_widget.draw(self.screen)
 
         pygame.display.flip()
 

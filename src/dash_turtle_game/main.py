@@ -2,9 +2,9 @@ import time
 from threading import Thread
 
 from .map import ConnectionState, GameManager
-from .constants import CmdEvent, TileType, Settings
+from .constants import CmdEvent, TileType, Settings, BotSounds
 from .mqtt_client import MQTTCommandClient
-from .bot_interface import RobotInterface, BotSounds
+from .card_gui import event_to_card, card_to_event
 
 SETTINGS = Settings(
     START_TILE=(3, 5),
@@ -20,7 +20,13 @@ SETTINGS = Settings(
     TIME_BETWEEN_PRINT_SEC=2.0,
     MQTT_BROKER_ADDR="192.168.1.110",
     BOT_CONNECT_TIMEOUT_SEC=10.0,
+    USE_SIM_BOT=False,
 )
+
+if SETTINGS.USE_SIM_BOT:
+    from .sim_bot_interface import RobotInterface
+else:
+    from .bot_interface import RobotInterface
 
 # TODO:
 # Tune obstacle detection
@@ -45,7 +51,7 @@ SETTINGS = Settings(
 # that the context won't switch while using a piece of data, but I can't
 # call the blocking WWRobot functions. To keep things simple, I'll keep it
 # multithreaded.
-def robot_ctrl(sys_ctrl: 'SystemControl'):
+def robot_ctrl(sys_ctrl: "SystemControl"):
     assert sys_ctrl.bot_intr is not None
 
     bot_inter = sys_ctrl.bot_intr
@@ -54,7 +60,7 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
 
     start_time = time.time()
     sensors = None
-    
+
     while True:
         try:
             sensors = bot_inter.sensor_queue.get(timeout=0.1)
@@ -73,7 +79,7 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
     if sensors is None or bot_inter.robot_ctrl is None:
         print("Robot interface terminated")
         return
-    
+
     with game_gui.get_map() as locked_map:
         locked_map.connected_state = ConnectionState.CONNECTED
 
@@ -87,8 +93,12 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
     last_idle = False
     moving_forward = False
 
-    queue_cmds = False
-    cmd_queue: list[CmdEvent] = []
+    running_queued_cmds = False
+    queued_index = -1
+    with game_gui.get_map() as locked_map:
+        if len(locked_map.card_widget.cards) > 0:
+            running_queued_cmds = True
+            locked_map.card_widget.set_active(0)
 
     try:
         while True:
@@ -120,16 +130,31 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
                     moving_forward = False
                     robot_ctrl.stop()
                     robot_ctrl.forward(reverse=True)
+                    robot_ctrl.play_sound(BotSounds.NO_WAY)
+                    running_queued_cmds = False
 
             map_pose = robot_ctrl.get_pose()
             map_x = int(map_pose.x)
             map_y = int(map_pose.y)
 
+            if (
+                map_x >= SETTINGS.MAP_SIZE_TILES[0]
+                or map_y >= SETTINGS.MAP_SIZE_TILES[1]
+                or map_x < 0
+                or map_y < 0
+            ):
+                # TODO: figure out what causes this. Sensor parsing error? Rollover?
+                print("Unexpected map position")
+                print(sensors)
+                print(map_pose)
+                exit(1)
+                continue
+
             with game_gui.get_map() as locked_map:
                 locked_map.set_all_tiles_unobserved()
                 locked_map.turtle_pose = map_pose
                 locked_map.set_observed_tile(map_x, map_y, TileType.EMPTY)
-            
+
             new_cmds = list(game_gui.get_window_events())
             if mqtt_client is not None:
                 new_cmds += list(mqtt_client.get_messages())
@@ -142,41 +167,37 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
                 return
 
             requested_move = False
-            if queue_cmds:
-                cmd_queue += new_cmds
-            else:
-                cur_cmd = CmdEvent.NONE
-                if len(cmd_queue) > 0:
-                    if sensors.is_idle:
-                        cur_cmd = cmd_queue.pop(0)
-                elif len(new_cmds) > 0:
-                    if not sensors.is_idle:
-                        print("Wait for previous command to complete.")
-                        robot_ctrl.play_sound(BotSounds.SIGH)
-                    else:
-                        # Only handle first event if multiple received in same update.
-                        cur_cmd = new_cmds[0]
+            cur_cmd = CmdEvent.NONE
+            if running_queued_cmds:
+                if sensors.is_idle:
+                    with game_gui.get_map() as locked_map:
+                        queued_index += 1
+                        if len(locked_map.card_widget.cards) <= queued_index:
+                            print("Queue Complete")
+                            running_queued_cmds = False
+                        else:
+                            locked_map.card_widget.set_active(queued_index)
+                            cur_cmd = card_to_event(locked_map.card_widget.cards[queued_index])
+                            print(f"{cur_cmd.name} from queue")
+            elif len(new_cmds) > 0:
+                if not sensors.is_idle:
+                    print("Wait for previous command to complete.")
+                    robot_ctrl.play_sound(BotSounds.SIGH)
+                else:
+                    # Only handle first event if multiple received in same update.
+                    cur_cmd = new_cmds[0]
 
-                if cur_cmd in (CmdEvent.LEFT, CmdEvent.RIGHT):
-                    turn_clockwise = cur_cmd == CmdEvent.RIGHT
-                    robot_ctrl.turn(turn_clockwise)
-                elif cur_cmd == CmdEvent.UP:
-                    requested_move = True
-
-            if (map_x >= SETTINGS.MAP_SIZE_TILES[0]
-                or map_y >= SETTINGS.MAP_SIZE_TILES[1]
-                or map_x < 0
-                or map_y < 0
-            ):
-                # TODO: figure out what causes this. Sensor parsing error? Rollover?
-                print("Unexpected map position")
-                print(sensors)
-                print(map_pose)
-                exit(1)
-                continue
+            if cur_cmd in (CmdEvent.LEFT, CmdEvent.RIGHT):
+                turn_clockwise = cur_cmd == CmdEvent.RIGHT
+                robot_ctrl.turn(turn_clockwise)
+            elif cur_cmd == CmdEvent.UP:
+                requested_move = True
 
             if sensors.is_idle:
-                if not celebrated and game_gui.get_tile(map_x, map_y).type == TileType.GOAL:
+                if (
+                    not celebrated
+                    and game_gui.get_tile(map_x, map_y).type == TileType.GOAL
+                ):
                     # This blocks the GUI, should probably not, but not a huge issue.
                     robot_ctrl.do_celebrate()
                     celebrated = True
@@ -209,17 +230,23 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
                             and sensors.distance_front_right_facing
                             > SETTINGS.FRONT_DETECTION_THRESHOLD
                         ):
-                            locked_map.set_observed_tile(front_x, front_y, TileType.BLOCKED)
+                            locked_map.set_observed_tile(
+                                front_x, front_y, TileType.BLOCKED
+                            )
                         else:
-                            locked_map.set_observed_tile(front_x, front_y, TileType.EMPTY)
+                            locked_map.set_observed_tile(
+                                front_x, front_y, TileType.EMPTY
+                            )
 
                 if requested_move:
                     if looking_off_map:
                         print("Move off map")
                         robot_ctrl.play_sound(BotSounds.NO_WAY)
+                        running_queued_cmds = False
                     elif game_gui.get_tile(front_x, front_y).type == TileType.BLOCKED:
                         print("Move blocked")
                         robot_ctrl.play_sound(BotSounds.NO_WAY)
+                        running_queued_cmds = False
                     else:
                         robot_ctrl.forward()
                         moving_forward = True
@@ -233,8 +260,6 @@ def robot_ctrl(sys_ctrl: 'SystemControl'):
                 # print(robot.sensors.distance_front_left_facing, robot.sensors.distance_front_right_facing)
                 print(sensors)
                 print(map_pose)
-                if len(cmd_queue) > 0:
-                    print(cmd_queue)
                 last_print = time.time()
 
     except KeyboardInterrupt:
@@ -264,6 +289,21 @@ class SystemControl:
                             is_connecting = True
                         elif event == CmdEvent.QUIT:
                             raise KeyboardInterrupt()
+                        elif event in (CmdEvent.LEFT, CmdEvent.UP, CmdEvent.RIGHT):
+                            with self.game_gui.get_map() as locked_map:
+                                card_type = event_to_card(event)
+                                locked_map.card_widget.add_card(card_type)
+                                locked_map.card_widget.set_active(
+                                    len(locked_map.card_widget.cards) - 1
+                                )
+                        elif event == CmdEvent.DELETE_LAST_QUEUED:
+                            with self.game_gui.get_map() as locked_map:
+                                num_cards = len(locked_map.card_widget.cards)
+                                if num_cards > 0:
+                                    locked_map.card_widget.remove_card(num_cards - 1)
+                                    locked_map.card_widget.set_active(
+                                        len(locked_map.card_widget.cards) - 1
+                                    )
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 self.stop()
@@ -292,6 +332,7 @@ class SystemControl:
         if self.mqtt_client is not None:
             self.mqtt_client.disconnect()
         self.game_gui.stop()
+
 
 if __name__ == "__main__":
     SystemControl().main()

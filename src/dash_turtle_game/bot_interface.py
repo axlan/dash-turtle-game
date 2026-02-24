@@ -3,25 +3,14 @@ import random
 import time
 import math
 from queue import Queue
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import WonderPy.core.wwMain
 from WonderPy.core.wwConstants import WWRobotConstants
 from WonderPy.components.wwMedia import WWMedia
 from WonderPy.core.wwRobot import WWRobot
 
-from .constants import TurtlePose, Settings
-
-
-@dataclass
-class SensorData:
-    x: float
-    y: float
-    degrees: float
-    is_idle: bool
-    distance_front_left_facing: float
-    distance_front_right_facing: float
-
+from .constants import TurtlePose, Settings, SensorData, normalize_ang360, BotSounds
 
 # Coordinates notes:
 # Pygame draws things in pixels with:
@@ -33,11 +22,6 @@ class SensorData:
 #
 # The control uses unitless distance where each tile is 1x1
 #
-
-
-def normalize_ang360(angle: float) -> float:
-    return angle % 360.0
-
 
 def rotate_point(x, y, sigma_degrees):
     """
@@ -59,11 +43,6 @@ def rotate_point(x, y, sigma_degrees):
     y_prime = x * math.sin(sigma_radians) + y * math.cos(sigma_radians)
 
     return x_prime, y_prime
-
-
-class BotSounds(StrEnum):
-    SIGH = WWMedia.WWSound.WWSoundDash.SIGH_DASH
-    NO_WAY = WWMedia.WWSound.WWSoundDash.NO_WAY
 
 
 class RobotControl:
@@ -179,7 +158,11 @@ class RobotControl:
         self.robot.commands.body.stage_stop()
 
     def play_sound(self, sound: BotSounds):
-        self.robot.commands.media.stage_audio(str(sound))
+        sound_str = {
+            BotSounds.SIGH: WWMedia.WWSound.WWSoundDash.SIGH_DASH,
+            BotSounds.NO_WAY: WWMedia.WWSound.WWSoundDash.NO_WAY,
+        }[sound]
+        self.robot.commands.media.stage_audio(sound_str)
 
 
 class RobotInterface:
@@ -193,12 +176,12 @@ class RobotInterface:
         left_reflect = (
             robot.sensors.distance_front_left_facing.reflectance
             if robot.sensors.distance_front_left_facing.reflectance is not None
-            else 255.0
+            else 0
         )
         right_reflect = (
             robot.sensors.distance_front_right_facing.reflectance
             if robot.sensors.distance_front_right_facing.reflectance is not None
-            else 255.0
+            else 0
         )
 
         sensors = SensorData(

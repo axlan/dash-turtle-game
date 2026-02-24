@@ -17,6 +17,7 @@ class CmdEvent(Enum):
     STOP = auto()
     TOGGLE_QUEUING = auto()
     TOGGLE_CONNECT = auto()
+    DELETE_LAST_QUEUED = auto()
 
 class TileType(Enum):
     UNKNOWN = auto()
@@ -24,6 +25,9 @@ class TileType(Enum):
     BLOCKED = auto()
     GOAL = auto()
 
+class BotSounds(Enum):
+    SIGH = auto()
+    NO_WAY = auto()
 
 @dataclass
 class TurtlePose:
@@ -57,7 +61,16 @@ class Settings:
     MQTT_BROKER_ADDR: Optional[str]
 
     BOT_CONNECT_TIMEOUT_SEC: float
+    USE_SIM_BOT: bool
 
 def normalize_ang360(angle: float) -> float:
     return angle % 360.0
 
+@dataclass
+class SensorData:
+    x: float
+    y: float
+    degrees: float
+    is_idle: bool
+    distance_front_left_facing: float
+    distance_front_right_facing: float
