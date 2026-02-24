@@ -130,6 +130,10 @@ class GameMap:
         self.button_rect = pygame.Rect(10, self.map_height + 10, 120, self.tile_size - 20)
         self.connected_state = ConnectionState.IDLE
         self.frame_count = 0
+        
+        # Drag and drop state
+        self.dragging = None  # None, 'turtle', or 'goal'
+        self.drag_offset = (0, 0)
 
         self.tiles[conf.GOAL_TILE[0]][conf.GOAL_TILE[1]] = TileState(TileType.GOAL)
 
@@ -164,6 +168,32 @@ class GameMap:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if self.button_rect.collidepoint(event.pos):
                     yield CmdEvent.TOGGLE_CONNECT
+                elif self.connected_state == ConnectionState.IDLE:
+                    turtle_rect = self._get_turtle_rect()
+                    goal_rect = self._get_goal_rect()
+                    self.drag_offset = event.pos
+                    if turtle_rect.collidepoint(event.pos):
+                        self.dragging = 'turtle'
+                    elif goal_rect.collidepoint(event.pos):
+                        self.dragging = 'goal'
+            elif event.type == pygame.MOUSEMOTION:
+                if self.dragging and self.connected_state == ConnectionState.IDLE:
+                    tile_x, tile_y = self._get_tile_from_pos(event.pos)
+                    if self.dragging == 'turtle':
+                        if self._is_valid_tile(tile_x, tile_y):
+                            self.turtle_pose = replace(self.turtle_pose, x=tile_x + 0.5, y=tile_y + 0.5)
+                    elif self.dragging == 'goal':
+                        if self._is_valid_tile(tile_x, tile_y):
+                            old_x, old_y = self._get_tile_from_pos(self.drag_offset)
+                            self.drag_offset = event.pos
+                            self.tiles[old_x][old_y] = replace(self.tiles[old_x][old_y], type=TileType.EMPTY)
+                            self.tiles[tile_x][tile_y] = replace(self.tiles[tile_x][tile_y], type=TileType.GOAL)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                # Rotate turtle if clicked and not dragged.
+                if self.dragging == 'turtle':
+                    if abs(event.pos[0] - self.drag_offset[0] <2) and abs(event.pos[1] - self.drag_offset[1] <2):
+                        self.turtle_pose = replace(self.turtle_pose, theta=(self.turtle_pose.theta + 90) % 360)
+                self.dragging = None
             elif event.type == pygame.KEYUP:
                 if event.key == pygame.K_RIGHT:
                     yield CmdEvent.RIGHT
@@ -173,6 +203,33 @@ class GameMap:
                     yield CmdEvent.UP
                 elif event.key == pygame.K_ESCAPE:
                     yield CmdEvent.QUIT
+
+    def _get_turtle_rect(self) -> pygame.Rect:
+        rotated = pygame.transform.rotate(self.turtle_frame, self.turtle_pose.theta)
+        rotated_rect = rotated.get_rect()
+        y = int(self.map_height - self.turtle_pose.y * self.tile_size)
+        x = int(self.turtle_pose.x * self.tile_size)
+        rotated_rect.center = (x, y)
+        return rotated_rect
+
+    def _get_goal_rect(self) -> pygame.Rect:
+        for x, col_tiles in enumerate(self.tiles):
+            for y, t in enumerate(col_tiles):
+                if t.type == TileType.GOAL:
+                    goal_x = self.tile_size * x + self.tile_size // 2
+                    goal_y = self.map_height - self.tile_size * (y + 1) + self.tile_size // 2
+                    return pygame.Rect(goal_x - self.tile_size // 2, goal_y - self.tile_size // 2, self.tile_size, self.tile_size)
+        return pygame.Rect(0, 0, 0, 0)
+
+    def _get_tile_from_pos(self, pos: tuple) -> tuple:
+        x = pos[0] // self.tile_size
+        y = (self.map_height - pos[1]) // self.tile_size
+        return (int(x), int(y))
+
+    def _is_valid_tile(self, x: int, y: int) -> bool:
+        num_x = len(self.tiles)
+        num_y = len(self.tiles[0]) if self.tiles else 0
+        return 0 <= x < num_x and 0 <= y < num_y
 
     def set_connection_state(self, new_state: ConnectionState):
         self.connected_state = new_state
@@ -197,14 +254,9 @@ class GameMap:
                         self.fog_surface, (x, y), (0, 0, self.tile_size, self.tile_size)
                     )
 
+        turtle_rect = self._get_turtle_rect()
         rotated = pygame.transform.rotate(self.turtle_frame, self.turtle_pose.theta)
-        rotated_rect = rotated.get_rect()
-        # handle y starting at top and going down
-        # Convert turtle position to pixels
-        y = int(self.map_height - self.turtle_pose.y * self.tile_size)
-        x = int(self.turtle_pose.x * self.tile_size)
-        rotated_rect.center = (x, y)
-        self.screen.blit(rotated, rotated_rect)
+        self.screen.blit(rotated, turtle_rect)
 
         # Draw button
         self.frame_count += 1
