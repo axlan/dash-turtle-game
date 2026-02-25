@@ -20,7 +20,7 @@ SETTINGS = Settings(
     TIME_BETWEEN_PRINT_SEC=2.0,
     MQTT_BROKER_ADDR="192.168.1.110",
     BOT_CONNECT_TIMEOUT_SEC=10.0,
-    USE_SIM_BOT=False,
+    USE_SIM_BOT=True,
 )
 
 if SETTINGS.USE_SIM_BOT:
@@ -268,10 +268,10 @@ def robot_ctrl(sys_ctrl: "SystemControl"):
 
 class SystemControl:
     def __init__(self) -> None:
-        self.mqtt_client = None
+        self.mqtt_client: MQTTCommandClient | None = None
         if SETTINGS.MQTT_BROKER_ADDR:
-            mqtt_client = MQTTCommandClient(SETTINGS.MQTT_BROKER_ADDR)
-            mqtt_client.connect()
+            self.mqtt_client = MQTTCommandClient(SETTINGS.MQTT_BROKER_ADDR)
+            self.mqtt_client.connect()
 
         self.game_gui = GameManager(SETTINGS)
         self.running = True
@@ -282,7 +282,10 @@ class SystemControl:
         while self.running:
             try:
                 while not is_connecting:
-                    for event in self.game_gui.get_window_events():
+                    events = list(self.game_gui.get_window_events())
+                    if self.mqtt_client is not None:
+                        events += list(self.mqtt_client.get_messages())
+                    for event in events:
                         if event == CmdEvent.TOGGLE_CONNECT:
                             with self.game_gui.get_map() as locked_map:
                                 locked_map.connected_state = ConnectionState.CONNECTING

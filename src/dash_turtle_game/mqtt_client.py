@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 CONTROLLER_TOPIC = "controller/buttons_pressed"
-
+CARD_TOPIC = "card_reader/card_text"
 
 class MQTTCommandClient:
     def __init__(self, host: str, port: int = 1883) -> None:
@@ -43,6 +43,7 @@ class MQTTCommandClient:
         if reason_code == mqtt.MQTT_ERR_SUCCESS:
             logger.info(f"Connected to broker at {self._host}:{self._port}")
             client.subscribe(CONTROLLER_TOPIC)
+            client.subscribe(CARD_TOPIC)
         else:
             logger.warning(
                 f"Connection failed (rc={reason_code}), will attempt reconnect"
@@ -80,6 +81,17 @@ class MQTTCommandClient:
                     elif val == "C":
                         self._messages.put_nowait(CmdEvent.RIGHT)
             self.pressed_buttons = new_buttons
+        else:
+            new_card = json.loads(json_str)
+            CARD_TEXT = {
+                'UP' : CmdEvent.UP,
+                'LEFT' : CmdEvent.LEFT,
+                'RIGHT' : CmdEvent.RIGHT,
+                'CONNECT' : CmdEvent.TOGGLE_CONNECT,
+            }
+            cmd = CARD_TEXT.get(new_card['txt'], None)
+            if cmd is not None:
+                self._messages.put_nowait(cmd)
 
     # ------------------------------------------------------------------
     # Public API
