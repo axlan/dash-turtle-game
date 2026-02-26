@@ -20,7 +20,7 @@ SETTINGS = Settings(
     TIME_BETWEEN_PRINT_SEC=2.0,
     MQTT_BROKER_ADDR="192.168.1.110",
     BOT_CONNECT_TIMEOUT_SEC=10.0,
-    USE_SIM_BOT=True,
+    USE_SIM_BOT=False,
 )
 
 if SETTINGS.USE_SIM_BOT:
@@ -337,5 +337,10 @@ class SystemControl:
         self.game_gui.stop()
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for console script"""
     SystemControl().main()
+
+
+if __name__ == "__main__":
+    main()

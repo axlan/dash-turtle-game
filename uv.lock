@@ -29,11 +29,10 @@ wheels = [
 [[package]]
 name = "dash-turtle-game"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "paho-mqtt" },
     { name = "pygame" },
-    { name = "pytmx" },
     { name = "wonderpy" },
 ]
 
@@ -41,7 +40,6 @@ dependencies = [
 requires-dist = [
     { name = "paho-mqtt" },
     { name = "pygame" },
-    { name = "pytmx" },
     { name = "wonderpy", git = "https://github.com/axlan/WonderPy" },
 ]
 
@@ -232,15 +230,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/cc/40/49b1c1702114ee972678597393320d7b33f477e9d24f2a62f93d77f23dfb/pyobjc_framework_libdispatch-12.1-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:e9f49517e253716e40a0009412151f527005eec0b9a2311ac63ecac1bdf02332", size = 15938, upload-time = "2025-11-14T09:53:03.461Z" },
     { url = "https://files.pythonhosted.org/packages/59/d8/7d60a70fc1a546c6cb482fe0595cb4bd1368d75c48d49e76d0bc6c0a2d0f/pyobjc_framework_libdispatch-12.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:0ebfd9e4446ab6528126bff25cfb09e4213ddf992b3208978911cfd3152e45f5", size = 15693, upload-time = "2025-11-14T09:53:05.531Z" },
     { url = "https://files.pythonhosted.org/packages/99/32/15e08a0c4bb536303e1568e2ba5cae1ce39a2e026a03aea46173af4c7a2d/pyobjc_framework_libdispatch-12.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:23fc9915cba328216b6a736c7a48438a16213f16dfb467f69506300b95938cc7", size = 15976, upload-time = "2025-11-14T09:53:07.936Z" },
-]
-
-[[package]]
-name = "pytmx"
-version = "3.32"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/04/4c/b5f720f7b7c4dc601365e1b2464a4434b2c5516ca22c59cb3c26a9ce4947/PyTMX-3.32.tar.gz", hash = "sha256:858fd8338f8e7de0e7967604f008022c26735ab98780b2c5d94d2e2c2f5809ca", size = 28026, upload-time = "2023-06-13T15:46:58.119Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/e0/fd0a2d2b93599dec876158fe7fccb8c3e8096844a5a4110dd5bc67377128/PyTMX-3.32-py3-none-any.whl", hash = "sha256:4da4c01133dfcb2746cb4e7f46ea1aef21d56119ab044f8f77b9906dea5fbccb", size = 24468, upload-time = "2023-06-13T15:46:56.341Z" },
 ]
 
 [[package]]
