@@ -6,6 +6,32 @@ A Python-based game controller for a Dash robot that combines real-time robotics
 
 This project enables a Dash robot to navigate a grid-based game environment. Players can queue movement commands via keyboard, controller, or NFC cards, and the robot executes them while the game tracks progress toward a goal tile.
 
+The positioning relies on the Dash's inertial navigation, so it needs to have its initial conditions set manually, and can drift over time, from the wheels slipping, from collisions, or by being picked up.
+
+Basic Demo:
+
+[![basic demo](https://img.youtube.com/vi/gdieOVodkvw/0.jpg)](https://www.youtube.com/watch?v=gdieOVodkvw)
+
+More comprehensive demo:
+
+[![full demo](https://img.youtube.com/vi/4csbya6z6S4/0.jpg)](https://www.youtube.com/watch?v=4csbya6z6S4)
+
+## Features
+
+- Bot can be controlled with the keyboard, the toy controller, or the NFC cards.
+
+- Control software does coordinate transforms and movement commands to try to keep the robot centered in the grid tiles.
+
+- GUI shows positioning estimate and can queue up a sequence of commands to execute when connected.
+
+- Simulation mode allows for testing without a Dash bot connected.
+
+- IR distance sensors do basic collision detection
+
+- The front, right, and left LEDs are set to match the colors of the buttons on the controller to help the player understand how the clockwise and counterclockwise turns correspond to the bot's relative position.
+
+- The light on top of the bot indicates if it's busy. When sending commands in realtime, it will sigh if a new command is sent while it's still executing the previous one.
+
 ## Components
 
 ### Game Interface (dash_turtle_game)

@@ -67,7 +67,9 @@ def robot_ctrl(sys_ctrl: "SystemControl"):
             break
         except:
             if time.time() - start_time > SETTINGS.BOT_CONNECT_TIMEOUT_SEC:
-                break
+                print("Timed out waiting for robot")
+                bot_inter.stop()
+                return
         events = list(game_gui.get_window_events())
         if CmdEvent.QUIT in events:
             sys_ctrl.stop()
