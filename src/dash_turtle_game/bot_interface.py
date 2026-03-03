@@ -46,6 +46,14 @@ def rotate_point(x, y, sigma_degrees):
 
 
 class RobotControl:
+    """
+    Class to mediate sending commands to Dash robot and interpreting sensor pose.
+
+    This class does not update its stored sensor data unless `update_sensors` is called.
+    This is needed for `get_pose`, and also for the `turn` and `forward` since they rely on the current position.
+    This isn't required, but simplifies the internal logic.
+
+    """
     def __init__(self, robot: WWRobot, sensors: SensorData, conf: Settings) -> None:
         self.robot = robot
         self.conf = conf

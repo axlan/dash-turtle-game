@@ -16,6 +16,8 @@ More comprehensive demo:
 
 [![full demo](https://img.youtube.com/vi/4csbya6z6S4/0.jpg)](https://www.youtube.com/watch?v=4csbya6z6S4)
 
+This is built on top of the Dash Python interface that I reverse engineered in <https://github.com/axlan/WonderPy>.
+
 ## Features
 
 - Bot can be controlled with the keyboard, the toy controller, or the NFC cards.
