@@ -2,6 +2,8 @@
 
 A Python-based game controller for a Dash robot that combines real-time robotics control with a tile-based game interface.
 
+See <https://robopenguins.com/dash-turtle-game/> for blog post on the making of this project.
+
 ## Overview
 
 This project enables a Dash robot to navigate a grid-based game environment. Players can queue movement commands via keyboard, controller, or NFC cards, and the robot executes them while the game tracks progress toward a goal tile.
